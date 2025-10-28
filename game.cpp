@@ -17,7 +17,6 @@ struct Point
 // ============ Food Class ============
 class Food
 {
-    //    food execution
 private:
     Point position;
 
