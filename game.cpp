@@ -50,7 +50,6 @@ public:
     }
 };
 
-// ============ Snake Class ============
 class Snake
 {
     // snake execution
