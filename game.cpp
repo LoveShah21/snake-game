@@ -14,7 +14,6 @@ struct Point
     }
 };
 
-// ============ Food Class ============
 class Food
 {
     //    food execution
