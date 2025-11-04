@@ -1,5 +1,12 @@
 #include <iostream>
 #include <deque>
+#include <vector>
+#include <cstdlib>
+#include <ctime>
+#include <unistd.h>
+#include <termios.h>
+#include <sys/select.h>
+#include <fcntl.h>
 using namespace std;
 
 struct Point
@@ -51,7 +58,7 @@ public:
 
 class Snake
 {
-    private:
+private:
     deque<Point> body;
     Point direction;
     Point nextDirection;
@@ -125,8 +132,7 @@ public:
 // ============ Game Class ============
 class Game
 {
-    // game execution
-    private:
+private:
     const int WIDTH = 20;
     const int HEIGHT = 20;
     Snake *snake;
@@ -418,6 +424,7 @@ public:
 };
 int main()
 {
-    cout << "Hello, Snake Game!" << endl;
+    Game game;
+    game.run();
     return 0;
 }
