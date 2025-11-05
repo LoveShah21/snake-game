@@ -7,6 +7,9 @@
 #include <termios.h>
 #include <sys/select.h>
 #include <fcntl.h>
+#include <fstream>
+#include <sys/ioctl.h>
+#include <sstream>
 using namespace std;
 
 struct Point
@@ -21,6 +24,50 @@ struct Point
     }
 };
 
+// ============ Obstacle Class ============
+class Obstacle
+{
+private:
+    vector<Point> positions;
+
+public:
+    Obstacle() {}
+
+    void generateObstacles(int gridWidth, int gridHeight, const Point &snakeStart)
+    {
+        positions.clear();
+        int numObstacles = (gridWidth * gridHeight) / 50;
+
+        for (int i = 0; i < numObstacles; ++i)
+        {
+            int x = rand() % gridWidth;
+            int y = rand() % gridHeight;
+            Point obs(x, y);
+
+            if (abs(x - snakeStart.x) > 3 && abs(y - snakeStart.y) > 3)
+            {
+                positions.push_back(obs);
+            }
+        }
+    }
+
+    bool isObstacle(const Point &p) const
+    {
+        for (const auto &obs : positions)
+        {
+            if (obs == p)
+                return true;
+        }
+        return false;
+    }
+
+    const vector<Point> &getPositions() const
+    {
+        return positions;
+    }
+};
+
+// ============ Food Class ============
 class Food
 {
 private:
@@ -29,7 +76,7 @@ private:
 public:
     Food() : position(0, 0) {}
 
-    void spawn(int gridWidth, int gridHeight, const deque<Point> &snakeBody)
+    void spawn(int gridWidth, int gridHeight, const deque<Point> &snakeBody, const Obstacle &obstacles)
     {
         bool validPosition;
         do
@@ -38,7 +85,6 @@ public:
             position.x = rand() % gridWidth;
             position.y = rand() % gridHeight;
 
-            // Ensure food doesn't spawn on snake
             for (const auto &segment : snakeBody)
             {
                 if (position == segment)
@@ -46,6 +92,11 @@ public:
                     validPosition = false;
                     break;
                 }
+            }
+
+            if (validPosition && obstacles.isObstacle(position))
+            {
+                validPosition = false;
             }
         } while (!validPosition);
     }
@@ -56,6 +107,7 @@ public:
     }
 };
 
+// ============ Snake Class ============
 class Snake
 {
 private:
@@ -67,7 +119,6 @@ private:
 public:
     Snake(int startX, int startY) : direction(1, 0), nextDirection(1, 0), growing(false)
     {
-        // Start with 3 segments
         body.push_back(Point(startX, startY));
         body.push_back(Point(startX - 1, startY));
         body.push_back(Point(startX - 2, startY));
@@ -75,7 +126,6 @@ public:
 
     void setDirection(int dx, int dy)
     {
-        // Prevent reversing into itself
         if (dx != -direction.x || dy != -direction.y)
         {
             nextDirection.x = dx;
@@ -129,17 +179,68 @@ public:
     }
 };
 
+// ============ HighScore Manager ============
+class HighScoreManager
+{
+private:
+    const string filename = "snake_highscore.dat";
+    int highScore;
+
+public:
+    HighScoreManager() : highScore(0)
+    {
+        loadHighScore();
+    }
+
+    void loadHighScore()
+    {
+        ifstream file(filename);
+        if (file.is_open())
+        {
+            file >> highScore;
+            file.close();
+        }
+        else
+        {
+            highScore = 0;
+        }
+    }
+
+    void saveHighScore(int score)
+    {
+        if (score > highScore)
+        {
+            highScore = score;
+            ofstream file(filename);
+            if (file.is_open())
+            {
+                file << highScore;
+                file.close();
+            }
+        }
+    }
+
+    int getHighScore() const
+    {
+        return highScore;
+    }
+};
+
 // ============ Game Class ============
 class Game
 {
 private:
-    const int WIDTH = 20;
-    const int HEIGHT = 20;
+    int WIDTH;
+    int HEIGHT;
     Snake *snake;
     Food food;
+    Obstacle obstacles;
     int score;
     bool gameOver;
     struct termios oldt, newt;
+    HighScoreManager highScoreManager;
+    vector<string> screenBuffer;
+    vector<string> previousBuffer;
 
     void setupTerminal()
     {
@@ -148,7 +249,6 @@ private:
         newt.c_lflag &= ~(ICANON | ECHO);
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
-        // Set non-blocking mode
         int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
     }
@@ -157,14 +257,32 @@ private:
     {
         tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 
-        // Restore blocking mode
         int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
+    }
+
+    void getTerminalSize()
+    {
+        struct winsize w;
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+
+        WIDTH = min(60, (int)w.ws_col - 4);
+        HEIGHT = min(30, (int)w.ws_row - 8);
+
+        if (WIDTH < 20)
+            WIDTH = 20;
+        if (HEIGHT < 15)
+            HEIGHT = 15;
     }
 
     void clearScreen()
     {
         cout << "\033[2J\033[H";
+    }
+
+    void moveCursor(int row, int col)
+    {
+        cout << "\033[" << row << ";" << col << "H";
     }
 
     void hideCursor()
@@ -177,68 +295,114 @@ private:
         cout << "\033[?25h";
     }
 
-    void draw()
+    void initializeBuffer()
     {
-        clearScreen();
+        screenBuffer.clear();
+        previousBuffer.clear();
 
-        // Draw top border
-        cout << "+";
+        // Top border
+        string topBorder = "+";
         for (int i = 0; i < WIDTH; ++i)
-            cout << "-";
-        cout << "+" << endl;
+            topBorder += "-";
+        topBorder += "+";
+        screenBuffer.push_back(topBorder);
 
-        // Draw game area
+        // Game area
         for (int y = 0; y < HEIGHT; ++y)
         {
-            cout << "|";
+            string line = "|";
             for (int x = 0; x < WIDTH; ++x)
             {
-                Point current(x, y);
-                bool isSnake = false;
-                bool isHead = false;
-
-                // Check if snake is at this position
-                const deque<Point> &body = snake->getBody();
-                for (size_t i = 0; i < body.size(); ++i)
-                {
-                    if (body[i] == current)
-                    {
-                        isSnake = true;
-                        if (i == 0)
-                            isHead = true;
-                        break;
-                    }
-                }
-
-                if (isHead)
-                {
-                    cout << "O";
-                }
-                else if (isSnake)
-                {
-                    cout << "o";
-                }
-                else if (current == food.getPosition())
-                {
-                    cout << "*";
-                }
-                else
-                {
-                    cout << " ";
-                }
+                line += " ";
             }
-            cout << "|" << endl;
+            line += "|";
+            screenBuffer.push_back(line);
         }
 
-        // Draw bottom border
-        cout << "+";
+        // Bottom border
+        string bottomBorder = "+";
         for (int i = 0; i < WIDTH; ++i)
-            cout << "-";
-        cout << "+" << endl;
+            bottomBorder += "-";
+        bottomBorder += "+";
+        screenBuffer.push_back(bottomBorder);
 
-        // Display score
-        cout << "Score: " << score << endl;
-        cout << "Controls: W/A/S/D or Arrow Keys | Q to quit" << endl;
+        // Status lines
+        stringstream ss;
+        ss << "Score: " << score << " | High Score: " << highScoreManager.getHighScore();
+        screenBuffer.push_back(ss.str());
+        screenBuffer.push_back("Controls: W/A/S/D or Arrow Keys | Q to quit");
+
+        previousBuffer = screenBuffer;
+    }
+
+    void updateBuffer()
+    {
+        // Reset game area to spaces
+        for (int y = 0; y < HEIGHT; ++y)
+        {
+            for (int x = 0; x < WIDTH; ++x)
+            {
+                screenBuffer[y + 1][x + 1] = ' ';
+            }
+        }
+
+        // Draw obstacles
+        for (const auto &obs : obstacles.getPositions())
+        {
+            if (obs.x >= 0 && obs.x < WIDTH && obs.y >= 0 && obs.y < HEIGHT)
+            {
+                screenBuffer[obs.y + 1][obs.x + 1] = '#';
+            }
+        }
+
+        // Draw food
+        Point foodPos = food.getPosition();
+        screenBuffer[foodPos.y + 1][foodPos.x + 1] = '*';
+
+        // Draw snake
+        const deque<Point> &body = snake->getBody();
+        for (size_t i = 0; i < body.size(); ++i)
+        {
+            if (body[i].x >= 0 && body[i].x < WIDTH && body[i].y >= 0 && body[i].y < HEIGHT)
+            {
+                if (i == 0)
+                    screenBuffer[body[i].y + 1][body[i].x + 1] = 'O';
+                else
+                    screenBuffer[body[i].y + 1][body[i].x + 1] = 'o';
+            }
+        }
+
+        // Update status line
+        stringstream ss;
+        ss << "Score: " << score << " | High Score: " << highScoreManager.getHighScore();
+        screenBuffer[HEIGHT + 2] = ss.str();
+    }
+
+    void draw()
+    {
+        updateBuffer();
+
+        // Only redraw changed lines
+        for (size_t i = 0; i < screenBuffer.size(); ++i)
+        {
+            if (screenBuffer[i] != previousBuffer[i])
+            {
+                moveCursor(i + 1, 1);
+                cout << screenBuffer[i];
+                cout.flush();
+                previousBuffer[i] = screenBuffer[i];
+            }
+        }
+    }
+
+    void drawFullScreen()
+    {
+        clearScreen();
+        for (const auto &line : screenBuffer)
+        {
+            cout << line << endl;
+        }
+        cout.flush();
     }
 
     char getInput()
@@ -246,7 +410,6 @@ private:
         char c = 0;
         read(STDIN_FILENO, &c, 1);
 
-        // Handle arrow keys
         if (c == 27)
         {
             char seq[2];
@@ -257,13 +420,13 @@ private:
                     if (read(STDIN_FILENO, &seq[1], 1) == 1)
                     {
                         if (seq[1] == 'A')
-                            return 'w'; // Up
+                            return 'w';
                         if (seq[1] == 'B')
-                            return 's'; // Down
+                            return 's';
                         if (seq[1] == 'C')
-                            return 'd'; // Right
+                            return 'd';
                         if (seq[1] == 'D')
-                            return 'a'; // Left
+                            return 'a';
                     }
                 }
             }
@@ -303,14 +466,17 @@ private:
     {
         Point head = snake->getHead();
 
-        // Wall collision
         if (head.x < 0 || head.x >= WIDTH || head.y < 0 || head.y >= HEIGHT)
         {
             return true;
         }
 
-        // Self collision
         if (snake->checkSelfCollision())
+        {
+            return true;
+        }
+
+        if (obstacles.isObstacle(head))
         {
             return true;
         }
@@ -324,12 +490,12 @@ private:
         {
             snake->grow();
             score++;
-            food.spawn(WIDTH, HEIGHT, snake->getBody());
+            food.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles);
         }
     }
 
 public:
-    Game() : snake(nullptr), score(0), gameOver(false) {}
+    Game() : WIDTH(40), HEIGHT(25), snake(nullptr), score(0), gameOver(false) {}
 
     ~Game()
     {
@@ -347,29 +513,36 @@ public:
 
         while (running)
         {
-            // Initialize game
+            getTerminalSize();
+
             if (snake)
                 delete snake;
             snake = new Snake(WIDTH / 2, HEIGHT / 2);
             score = 0;
             gameOver = false;
 
-            food.spawn(WIDTH, HEIGHT, snake->getBody());
+            obstacles.generateObstacles(WIDTH, HEIGHT, Point(WIDTH / 2, HEIGHT / 2));
+            food.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles);
 
             // Show instructions
             clearScreen();
             cout << "=== SNAKE GAME ===" << endl;
             cout << "Controls: W/A/S/D or Arrow Keys" << endl;
             cout << "Goal: Eat food (*) and grow!" << endl;
-            cout << "Avoid walls and yourself!" << endl;
+            cout << "Avoid walls (#), obstacles, and yourself!" << endl;
+            cout << "Play Area: " << WIDTH << "x" << HEIGHT << endl;
+            cout << "Current High Score: " << highScoreManager.getHighScore() << endl;
             cout << endl;
             cout << "Press any key to start..." << endl;
 
-            // Wait for key press
             while (getInput() == 0)
             {
                 usleep(10000);
             }
+
+            // Initialize buffers
+            initializeBuffer();
+            drawFullScreen();
 
             // Game loop
             while (!gameOver)
@@ -391,18 +564,24 @@ public:
 
                 checkFood();
 
-                usleep(150000); // 150ms delay - adjusted for slower, more playable speed
+                usleep(120000);
             }
+
+            highScoreManager.saveHighScore(score);
 
             // Game over screen
             clearScreen();
             cout << "=== GAME OVER ===" << endl;
             cout << "Final Score: " << score << endl;
+            cout << "High Score: " << highScoreManager.getHighScore() << endl;
+            if (score == highScoreManager.getHighScore() && score > 0)
+            {
+                cout << "🎉 NEW HIGH SCORE! 🎉" << endl;
+            }
             cout << endl;
             cout << "Press R to restart or Q to quit: ";
             cout.flush();
 
-            // Wait for restart or quit
             char choice = 0;
             while (choice != 'r' && choice != 'R' && choice != 'q' && choice != 'Q')
             {
@@ -420,8 +599,10 @@ public:
         restoreTerminal();
         clearScreen();
         cout << "Thanks for playing!" << endl;
+        cout << "Final High Score: " << highScoreManager.getHighScore() << endl;
     }
 };
+
 int main()
 {
     Game game;
