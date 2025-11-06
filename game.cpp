@@ -811,10 +811,10 @@ private:
         switch (powerup.getType())
         {
         case SPEED_BOOST:
-            currentSpeed = baseSpeed / 2; // Faster
+            currentSpeed = baseSpeed * 2; // Faster
             break;
         case SLOW_DOWN:
-            currentSpeed = baseSpeed * 2; // Slower
+            currentSpeed = baseSpeed / 2; // Slower
             break;
         case SCORE_DOUBLE:
             doubleScoreActive = true;
