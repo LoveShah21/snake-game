@@ -12,6 +12,38 @@
 #include <sstream>
 using namespace std;
 
+// ============ Sound System ============
+class SoundManager
+{
+public:
+    static void playSound(const string &event)
+    {
+        // Cross-platform beep using terminal bell
+        if (event == "eat")
+        {
+            cout << "\a" << flush; // Single beep for food
+        }
+        else if (event == "powerup")
+        {
+            cout << "\a" << flush;
+            usleep(50000);
+            cout << "\a" << flush; // Double beep for powerup
+        }
+        else if (event == "gameover")
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                cout << "\a" << flush;
+                usleep(100000);
+            }
+        }
+        else if (event == "collision")
+        {
+            cout << "\a" << flush;
+        }
+    }
+};
+
 struct Point
 {
     int x, y;
@@ -21,6 +53,138 @@ struct Point
     bool operator==(const Point &other) const
     {
         return x == other.x && y == other.y;
+    }
+};
+
+// ============ PowerUp System ============
+enum PowerUpType
+{
+    SPEED_BOOST,   // Faster movement
+    SLOW_DOWN,     // Slower movement
+    SCORE_DOUBLE,  // Double points for limited time
+    INVINCIBILITY, // Can't die from obstacles/walls temporarily
+    SHRINK         // Remove last segment
+};
+
+class PowerUp
+{
+private:
+    Point position;
+    PowerUpType type;
+    int duration; // Duration in game ticks
+    bool active;
+    int remainingTime; // Remaining active time
+
+public:
+    PowerUp() : position(0, 0), type(SPEED_BOOST), duration(0), active(false), remainingTime(0) {}
+
+    void spawn(int gridWidth, int gridHeight, const deque<Point> &snakeBody,
+               const vector<Point> &obstacles, const vector<Point> &foodPositions)
+    {
+        bool validPosition;
+        do
+        {
+            validPosition = true;
+            position.x = rand() % gridWidth;
+            position.y = rand() % gridHeight;
+
+            // Check snake collision
+            for (const auto &segment : snakeBody)
+            {
+                if (position == segment)
+                {
+                    validPosition = false;
+                    break;
+                }
+            }
+
+            // Check obstacle collision
+            if (validPosition)
+            {
+                for (const auto &obs : obstacles)
+                {
+                    if (position == obs)
+                    {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+
+            // Check food collision
+            if (validPosition)
+            {
+                for (const auto &food : foodPositions)
+                {
+                    if (position == food)
+                    {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+        } while (!validPosition);
+
+        // Randomly select powerup type
+        type = static_cast<PowerUpType>(rand() % 5);
+        duration = 100; // 100 ticks duration for time-based powerups
+        active = true;
+        remainingTime = 0;
+    }
+
+    Point getPosition() const { return position; }
+    PowerUpType getType() const { return type; }
+    bool isActive() const { return active; }
+    void deactivate() { active = false; }
+    int getRemainingTime() const { return remainingTime; }
+
+    void startEffect() { remainingTime = duration; }
+    bool updateEffect()
+    {
+        if (remainingTime > 0)
+        {
+            remainingTime--;
+            return true;
+        }
+        return false;
+    }
+
+    char getSymbol() const
+    {
+        switch (type)
+        {
+        case SPEED_BOOST:
+            return 'S';
+        case SLOW_DOWN:
+            return 'L';
+        case SCORE_DOUBLE:
+            return 'D';
+        case INVINCIBILITY:
+            return 'I';
+        case SHRINK:
+            return 'R';
+        default:
+            return 'P';
+        }
+    }
+
+    string getName() const
+    {
+        switch (type)
+        {
+        case SPEED_BOOST:
+            return "Speed Boost";
+        case SLOW_DOWN:
+            return "Slow Motion";
+        case SCORE_DOUBLE:
+            return "Double Score";
+        case INVINCIBILITY:
+            return "Invincibility";
+        case SHRINK:
+            return "Shrink";
+        default:
+            return "PowerUp";
+        }
     }
 };
 
@@ -67,43 +231,112 @@ public:
     }
 };
 
-// ============ Food Class ============
-class Food
+// ============ Food Class (Multiple Foods Support) ============
+class FoodManager
 {
 private:
-    Point position;
+    vector<Point> foodPositions;
+    int maxFoods;
 
 public:
-    Food() : position(0, 0) {}
+    FoodManager(int max = 3) : maxFoods(max) {}
 
-    void spawn(int gridWidth, int gridHeight, const deque<Point> &snakeBody, const Obstacle &obstacles)
+    void spawnFood(int gridWidth, int gridHeight, const deque<Point> &snakeBody,
+                   const Obstacle &obstacles, const vector<PowerUp> &powerups)
     {
+        if (foodPositions.size() >= maxFoods)
+            return;
+
         bool validPosition;
+        Point newFood;
         do
         {
             validPosition = true;
-            position.x = rand() % gridWidth;
-            position.y = rand() % gridHeight;
+            newFood.x = rand() % gridWidth;
+            newFood.y = rand() % gridHeight;
 
+            // Check snake collision
             for (const auto &segment : snakeBody)
             {
-                if (position == segment)
+                if (newFood == segment)
                 {
                     validPosition = false;
                     break;
                 }
             }
 
-            if (validPosition && obstacles.isObstacle(position))
+            // Check obstacle collision
+            if (validPosition && obstacles.isObstacle(newFood))
             {
                 validPosition = false;
             }
+
+            // Check existing food collision
+            if (validPosition)
+            {
+                for (const auto &food : foodPositions)
+                {
+                    if (newFood == food)
+                    {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+
+            // Check powerup collision
+            if (validPosition)
+            {
+                for (const auto &powerup : powerups)
+                {
+                    if (powerup.isActive() && newFood == powerup.getPosition())
+                    {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
         } while (!validPosition);
+
+        foodPositions.push_back(newFood);
     }
 
-    Point getPosition() const
+    void initializeFoods(int gridWidth, int gridHeight, const deque<Point> &snakeBody,
+                         const Obstacle &obstacles, const vector<PowerUp> &powerups)
     {
-        return position;
+        foodPositions.clear();
+        for (int i = 0; i < maxFoods; ++i)
+        {
+            spawnFood(gridWidth, gridHeight, snakeBody, obstacles, powerups);
+        }
+    }
+
+    bool checkAndRemoveFood(const Point &position)
+    {
+        for (auto it = foodPositions.begin(); it != foodPositions.end(); ++it)
+        {
+            if (*it == position)
+            {
+                foodPositions.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const vector<Point> &getFoodPositions() const
+    {
+        return foodPositions;
+    }
+
+    bool isFoodAt(const Point &p) const
+    {
+        for (const auto &food : foodPositions)
+        {
+            if (food == p)
+                return true;
+        }
+        return false;
     }
 };
 
@@ -153,6 +386,14 @@ public:
     void grow()
     {
         growing = true;
+    }
+
+    void shrink()
+    {
+        if (body.size() > 3) // Keep minimum length
+        {
+            body.pop_back();
+        }
     }
 
     Point getHead() const
@@ -233,14 +474,23 @@ private:
     int WIDTH;
     int HEIGHT;
     Snake *snake;
-    Food food;
+    FoodManager foodManager;
     Obstacle obstacles;
+    vector<PowerUp> powerups;
     int score;
+    int baseSpeed;
+    int currentSpeed;
     bool gameOver;
     struct termios oldt, newt;
     HighScoreManager highScoreManager;
     vector<string> screenBuffer;
     vector<string> previousBuffer;
+
+    // Active powerup effects
+    bool invincibilityActive;
+    bool doubleScoreActive;
+    int invincibilityTimer;
+    int doubleScoreTimer;
 
     void setupTerminal()
     {
@@ -267,7 +517,7 @@ private:
         ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
 
         WIDTH = min(60, (int)w.ws_col - 4);
-        HEIGHT = min(30, (int)w.ws_row - 8);
+        HEIGHT = min(30, (int)w.ws_row - 10);
 
         if (WIDTH < 20)
             WIDTH = 20;
@@ -327,9 +577,8 @@ private:
         screenBuffer.push_back(bottomBorder);
 
         // Status lines
-        stringstream ss;
-        ss << "Score: " << score << " | High Score: " << highScoreManager.getHighScore();
-        screenBuffer.push_back(ss.str());
+        screenBuffer.push_back("");
+        screenBuffer.push_back("");
         screenBuffer.push_back("Controls: W/A/S/D or Arrow Keys | Q to quit");
 
         previousBuffer = screenBuffer;
@@ -355,9 +604,27 @@ private:
             }
         }
 
-        // Draw food
-        Point foodPos = food.getPosition();
-        screenBuffer[foodPos.y + 1][foodPos.x + 1] = '*';
+        // Draw multiple foods
+        for (const auto &foodPos : foodManager.getFoodPositions())
+        {
+            if (foodPos.x >= 0 && foodPos.x < WIDTH && foodPos.y >= 0 && foodPos.y < HEIGHT)
+            {
+                screenBuffer[foodPos.y + 1][foodPos.x + 1] = '*';
+            }
+        }
+
+        // Draw powerups
+        for (const auto &powerup : powerups)
+        {
+            if (powerup.isActive())
+            {
+                Point pos = powerup.getPosition();
+                if (pos.x >= 0 && pos.x < WIDTH && pos.y >= 0 && pos.y < HEIGHT)
+                {
+                    screenBuffer[pos.y + 1][pos.x + 1] = powerup.getSymbol();
+                }
+            }
+        }
 
         // Draw snake
         const deque<Point> &body = snake->getBody();
@@ -372,17 +639,26 @@ private:
             }
         }
 
-        // Update status line
-        stringstream ss;
-        ss << "Score: " << score << " | High Score: " << highScoreManager.getHighScore();
-        screenBuffer[HEIGHT + 2] = ss.str();
+        // Update status lines
+        stringstream ss1;
+        ss1 << "Score: " << score << " | High Score: " << highScoreManager.getHighScore();
+        screenBuffer[HEIGHT + 2] = ss1.str();
+
+        stringstream ss2;
+        ss2 << "Active Effects: ";
+        if (invincibilityActive)
+            ss2 << "[INVINCIBLE:" << invincibilityTimer << "] ";
+        if (doubleScoreActive)
+            ss2 << "[DOUBLE SCORE:" << doubleScoreTimer << "] ";
+        if (!invincibilityActive && !doubleScoreActive)
+            ss2 << "None";
+        screenBuffer[HEIGHT + 3] = ss2.str();
     }
 
     void draw()
     {
         updateBuffer();
 
-        // Only redraw changed lines
         for (size_t i = 0; i < screenBuffer.size(); ++i)
         {
             if (screenBuffer[i] != previousBuffer[i])
@@ -466,19 +742,34 @@ private:
     {
         Point head = snake->getHead();
 
+        // Wall collision (ignore if invincible)
         if (head.x < 0 || head.x >= WIDTH || head.y < 0 || head.y >= HEIGHT)
         {
-            return true;
+            if (!invincibilityActive)
+            {
+                SoundManager::playSound("collision");
+                return true;
+            }
         }
 
+        // Self collision (ignore if invincible)
         if (snake->checkSelfCollision())
         {
-            return true;
+            if (!invincibilityActive)
+            {
+                SoundManager::playSound("collision");
+                return true;
+            }
         }
 
+        // Obstacle collision (ignore if invincible)
         if (obstacles.isObstacle(head))
         {
-            return true;
+            if (!invincibilityActive)
+            {
+                SoundManager::playSound("collision");
+                return true;
+            }
         }
 
         return false;
@@ -486,16 +777,102 @@ private:
 
     void checkFood()
     {
-        if (snake->getHead() == food.getPosition())
+        if (foodManager.checkAndRemoveFood(snake->getHead()))
         {
             snake->grow();
-            score++;
-            food.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles);
+            int points = doubleScoreActive ? 2 : 1;
+            score += points;
+            SoundManager::playSound("eat");
+
+            // Spawn new food to maintain count
+            foodManager.spawnFood(WIDTH, HEIGHT, snake->getBody(), obstacles, powerups);
+        }
+    }
+
+    void checkPowerUp()
+    {
+        Point head = snake->getHead();
+        for (auto &powerup : powerups)
+        {
+            if (powerup.isActive() && head == powerup.getPosition())
+            {
+                SoundManager::playSound("powerup");
+                applyPowerUp(powerup);
+                powerup.deactivate();
+
+                // Spawn new powerup after some delay
+                break;
+            }
+        }
+    }
+
+    void applyPowerUp(PowerUp &powerup)
+    {
+        switch (powerup.getType())
+        {
+        case SPEED_BOOST:
+            currentSpeed = baseSpeed / 2; // Faster
+            break;
+        case SLOW_DOWN:
+            currentSpeed = baseSpeed * 2; // Slower
+            break;
+        case SCORE_DOUBLE:
+            doubleScoreActive = true;
+            doubleScoreTimer = 100;
+            break;
+        case INVINCIBILITY:
+            invincibilityActive = true;
+            invincibilityTimer = 100;
+            break;
+        case SHRINK:
+            snake->shrink();
+            break;
+        }
+    }
+
+    void updatePowerUpEffects()
+    {
+        // Update invincibility
+        if (invincibilityActive)
+        {
+            invincibilityTimer--;
+            if (invincibilityTimer <= 0)
+            {
+                invincibilityActive = false;
+            }
+        }
+
+        // Update double score
+        if (doubleScoreActive)
+        {
+            doubleScoreTimer--;
+            if (doubleScoreTimer <= 0)
+            {
+                doubleScoreActive = false;
+            }
+        }
+
+        // Reset speed if no speed powerup active
+        bool hasSpeedPowerup = false;
+        for (const auto &pu : powerups)
+        {
+            if (pu.getRemainingTime() > 0)
+            {
+                hasSpeedPowerup = true;
+                break;
+            }
+        }
+        if (!hasSpeedPowerup)
+        {
+            currentSpeed = baseSpeed;
         }
     }
 
 public:
-    Game() : WIDTH(40), HEIGHT(25), snake(nullptr), score(0), gameOver(false) {}
+    Game() : WIDTH(40), HEIGHT(25), snake(nullptr), foodManager(3), score(0),
+             baseSpeed(120000), currentSpeed(120000), gameOver(false),
+             invincibilityActive(false), doubleScoreActive(false),
+             invincibilityTimer(0), doubleScoreTimer(0) {}
 
     ~Game()
     {
@@ -520,29 +897,48 @@ public:
             snake = new Snake(WIDTH / 2, HEIGHT / 2);
             score = 0;
             gameOver = false;
+            currentSpeed = baseSpeed;
+            invincibilityActive = false;
+            doubleScoreActive = false;
+            powerups.clear();
 
             obstacles.generateObstacles(WIDTH, HEIGHT, Point(WIDTH / 2, HEIGHT / 2));
-            food.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles);
+            foodManager.initializeFoods(WIDTH, HEIGHT, snake->getBody(), obstacles, powerups);
+
+            // Spawn initial powerups
+            for (int i = 0; i < 2; ++i)
+            {
+                PowerUp pu;
+                pu.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles.getPositions(),
+                         foodManager.getFoodPositions());
+                powerups.push_back(pu);
+            }
 
             // Show instructions
             clearScreen();
-            cout << "=== SNAKE GAME ===" << endl;
+            cout << "=== SNAKE GAME - ENHANCED EDITION ===" << endl;
             cout << "Controls: W/A/S/D or Arrow Keys" << endl;
-            cout << "Goal: Eat food (*) and grow!" << endl;
-            cout << "Avoid walls (#), obstacles, and yourself!" << endl;
+            cout << "Goal: Eat food (*) and collect powerups!" << endl;
+            cout << "\nPowerups:" << endl;
+            cout << "  S - Speed Boost (faster movement)" << endl;
+            cout << "  L - Slow Motion (easier control)" << endl;
+            cout << "  D - Double Score (2x points)" << endl;
+            cout << "  I - Invincibility (can't die)" << endl;
+            cout << "  R - Shrink (remove tail segment)" << endl;
+            cout << "\nAvoid walls (#), obstacles, and yourself!" << endl;
             cout << "Play Area: " << WIDTH << "x" << HEIGHT << endl;
             cout << "Current High Score: " << highScoreManager.getHighScore() << endl;
-            cout << endl;
-            cout << "Press any key to start..." << endl;
+            cout << "\nPress any key to start..." << endl;
 
             while (getInput() == 0)
             {
                 usleep(10000);
             }
 
-            // Initialize buffers
             initializeBuffer();
             drawFullScreen();
+
+            int tickCounter = 0;
 
             // Game loop
             while (!gameOver)
@@ -560,11 +956,30 @@ public:
                 if (checkCollision())
                 {
                     gameOver = true;
+                    SoundManager::playSound("gameover");
                 }
 
                 checkFood();
+                checkPowerUp();
+                updatePowerUpEffects();
 
-                usleep(120000);
+                // Spawn new powerup periodically
+                tickCounter++;
+                if (tickCounter % 150 == 0)
+                {
+                    PowerUp pu;
+                    pu.spawn(WIDTH, HEIGHT, snake->getBody(), obstacles.getPositions(),
+                             foodManager.getFoodPositions());
+                    powerups.push_back(pu);
+
+                    // Keep maximum 3 powerups
+                    if (powerups.size() > 3)
+                    {
+                        powerups.erase(powerups.begin());
+                    }
+                }
+
+                usleep(currentSpeed);
             }
 
             highScoreManager.saveHighScore(score);
